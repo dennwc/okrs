@@ -8,20 +8,22 @@ import (
 
 func TestGHSubtask(t *testing.T) {
 	const sample = `
-- [x] Run MinHashCUDA on weighted sets and store the hashes in a database #1105 
-- [ ] Add the precise similarity refiner for the communities #1141
+- [x] Task 1 #1105 
+  - [ ] Subtask number 1.1 #1141
 `
 	sub := reSubtask.FindAllStringSubmatch(sample, -1)
 	require.Equal(t, [][]string{
 		{
-			"- [x] Run MinHashCUDA on weighted sets and store the hashes in a database #1105 \n",
+			"- [x] Task 1 #1105",
+			"",
 			"x",
-			"Run MinHashCUDA on weighted sets and store the hashes in a database #1105",
+			"Task 1 #1105",
 		},
 		{
-			"- [ ] Add the precise similarity refiner for the communities #1141\n",
+			"  - [ ] Subtask number 1.1 #1141",
+			"  ",
 			" ",
-			"Add the precise similarity refiner for the communities #1141",
+			"Subtask number 1.1 #1141",
 		},
 	}, sub)
 }

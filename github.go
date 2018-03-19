@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -124,7 +125,7 @@ func (g *Github) loadProjTree(ctx context.Context, org string, proj int64) (Tree
 }
 
 var (
-	reSubtask = regexp.MustCompile(`-\s+\[(\s|x)\]\s+([^\s].*[^\s])\s*`)
+	reSubtask = regexp.MustCompile(`([\t ]*)-\s+\[(\s|x)\]\s+([^\s].*[^\s])`)
 	reHashRef = regexp.MustCompile(`\s+#(\d+)`)
 	reURL     = regexp.MustCompile(`\s+\(?(?:\[[^]]+\]\()?(http(?:s)?://[^)\s]+)\)?\)?`)
 )
@@ -164,17 +165,22 @@ func (g *Github) loadIssueTreeByURL(ctx context.Context, url string) (TreeNode, 
 	return nd, err
 }
 func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]TreeNode, error) {
-	var out []TreeNode
-	// TODO: preserve subtasks hierarchy
+	type Task struct {
+		Node TreeNode
+		Lvl  int
+	}
+	var tasks []Task
+	depth := make(map[int]int)
 	for _, sub := range reSubtask.FindAllStringSubmatch(body, -1) {
-		done, title := sub[1] == "x", sub[2]
+		lvl, done, title := len(sub[1]), sub[2] == "x", sub[3]
+		_ = lvl
 		var links []string
 		for _, s := range reHashRef.FindAllStringSubmatch(title, -1) {
 			title = strings.Replace(title, s[0], "", 1)
 			ref, _ := strconv.Atoi(s[1])
 			link, err := g.resolveHashRef(ctx, org, repo, ref)
 			if err != nil {
-				return out, err
+				return nil, err
 			}
 			links = append(links, link)
 		}
@@ -189,7 +195,7 @@ func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]
 			for _, l := range links {
 				sn, err := g.loadByURL(ctx, l)
 				if err != nil {
-					return out, err
+					return nil, err
 				}
 				nd.Sub = append(nd.Sub, sn)
 			}
@@ -197,9 +203,48 @@ func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]
 		if done {
 			nd.Progress.Done = 1
 		}
-		out = append(out, nd)
+		tasks = append(tasks, Task{Node: nd, Lvl: lvl})
+		depth[lvl] = lvl
 	}
-	return out, nil
+	var lvls []int
+	for l := range depth {
+		lvls = append(lvls, l)
+	}
+	sort.Ints(lvls)
+	for i, l := range lvls {
+		depth[l] = i
+	}
+	var root TreeNode
+	curAt := func(dst int) *TreeNode {
+		n, lvl := &root, 0
+		for lvl < dst {
+			if len(n.Sub) == 0 {
+				n.Sub = append(n.Sub, TreeNode{})
+			}
+			n = &n.Sub[len(n.Sub)-1]
+			lvl++
+		}
+		return n
+	}
+	for _, t := range tasks {
+		par := curAt(depth[t.Lvl])
+		par.Sub = append(par.Sub, t.Node)
+	}
+	var fix func(TreeNode) TreeNode
+	fix = func(n TreeNode) TreeNode {
+		for i := range n.Sub {
+			n.Sub[i] = fix(n.Sub[i])
+		}
+		if len(n.Sub) == 1 {
+			s := n.Sub[0]
+			if s.Title == "" && s.URL == "" && s.Desc == "" && s.ID == "" {
+				n.Sub = s.Sub
+			}
+		}
+		return n
+	}
+	root = fix(root)
+	return root.Sub, nil
 }
 
 const cacheDir = "./.cache/"
