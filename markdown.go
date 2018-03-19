@@ -9,6 +9,13 @@ import (
 	"gopkg.in/russross/blackfriday.v2"
 )
 
+func init() {
+	RegisterTreeWriter(TreeWriterDesc{
+		Name: "md", Ext: "md",
+		Write: WriteMDTree,
+	})
+}
+
 func ParseMDTree(r io.Reader) (TreeNode, error) {
 	ast, err := parseMD(r)
 	if err != nil {
@@ -149,4 +156,79 @@ func mdItem2Tree(root *blackfriday.Node) TreeNode {
 		}
 	}
 	return cur
+}
+
+func WriteMDTree(w io.Writer, tree TreeNode) error {
+	return writeMDTree(w, tree, 1, -1)
+}
+
+func writeMDTree(w io.Writer, node TreeNode, lvl, blvl int) error {
+	var last error
+	write := func(format string, args ...interface{}) {
+		_, err := fmt.Fprintf(w, format, args...)
+		if err != nil {
+			last = err
+		}
+	}
+	var hasDesc func(TreeNode) bool
+	hasDesc = func(node TreeNode) bool {
+		if node.Desc != "" {
+			return true
+		}
+		for _, c := range node.Sub {
+			if hasDesc(c) {
+				return true
+			}
+		}
+		return false
+	}
+	if blvl > 0 {
+		write("%s* %s\n", strings.Repeat("\t", blvl-1), node.Title)
+		for _, c := range node.Sub {
+			if err := writeMDTree(w, c, lvl+1, blvl+1); err != nil {
+				return err
+			}
+		}
+		return last
+	}
+	if node.Title != "" {
+		write("%s %s\n\n", strings.Repeat("#", lvl), node.Title)
+	}
+	if node.Desc != "" {
+		if blvl < 0 {
+			blvl = 0
+		}
+		write("%s\n\n", node.Desc)
+	}
+	if last != nil {
+		return last
+	}
+	if blvl == 0 {
+		noDesc := true
+		for _, c := range node.Sub {
+			if hasDesc(c) {
+				noDesc = false
+				break
+			}
+		}
+		if noDesc {
+			for _, c := range node.Sub {
+				if err := writeMDTree(w, c, lvl+1, blvl+1); err != nil {
+					return err
+				}
+			}
+			write("\n")
+			return last
+		}
+	}
+	for _, c := range node.Sub {
+		bl := blvl
+		if bl < 0 && len(node.Sub) > 1 {
+			bl = 0
+		}
+		if err := writeMDTree(w, c, lvl+1, bl); err != nil {
+			return err
+		}
+	}
+	return last
 }
