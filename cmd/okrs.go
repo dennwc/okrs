@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/dennwc/okrs"
 	"github.com/spf13/cobra"
@@ -84,4 +86,41 @@ func init() {
 	}
 	registerTreeWriterFlags(MDParseTree.Flags())
 	MDCmd.AddCommand(MDParseTree)
+
+	GHCmd := &cobra.Command{
+		Use:   "github",
+		Short: "Github-related tools",
+	}
+	GHCmd.PersistentFlags().String("auth", "", "github auth token")
+	GHCmd.PersistentFlags().String("org", "", "github org")
+	Root.AddCommand(GHCmd)
+
+	GHProjTree := &cobra.Command{
+		Use:   "proj",
+		Short: "load OKR tree from Github project",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			gh := &okrs.Github{}
+			gh.Token, _ = cmd.Flags().GetString("auth")
+			org, _ := cmd.Flags().GetString("org")
+			if org == "" {
+				return errors.New("organization should be specified")
+			}
+			o := okrs.GHOrg{Name: org}
+			for _, arg := range args {
+				o.Projects = append(o.Projects, okrs.GHProject{Name: arg})
+			}
+			gh.Orgs = append(gh.Orgs, o)
+			tree, err := gh.LoadTree(context.TODO())
+			if err != nil {
+				return err
+			}
+			name := org
+			if len(args) == 1 {
+				name += "_" + strings.Replace(args[0], " ", "_", -1)
+			}
+			return writeTree(name, cmd, tree)
+		},
+	}
+	registerTreeWriterFlags(GHProjTree.Flags())
+	GHCmd.AddCommand(GHProjTree)
 }
