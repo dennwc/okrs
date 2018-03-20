@@ -114,6 +114,10 @@ func (g *Github) loadProjTree(ctx context.Context, org string, proj int64) (Tree
 		}
 		for _, c := range cards {
 			url := c.GetContentURL()
+			if url == "" && c.Note != nil {
+				root.Sub = append(root.Sub, TreeNode{Desc: c.GetNote()})
+				continue
+			}
 			nd, err := g.loadByURL(ctx, url)
 			if err != nil {
 				return root, err
@@ -126,8 +130,8 @@ func (g *Github) loadProjTree(ctx context.Context, org string, proj int64) (Tree
 
 var (
 	reSubtask = regexp.MustCompile(`([\t ]*)-\s+\[(\s|x)\]\s+([^\s].*[^\s])`)
-	reHashRef = regexp.MustCompile(`\s+#(\d+)`)
-	reURL     = regexp.MustCompile(`\s+\(?(?:\[[^]]+\]\()?(http(?:s)?://[^)\s]+)\)?\)?`)
+	reHashRef = regexp.MustCompile(`#(\d+)`)
+	reURL     = regexp.MustCompile(`\(?(?:\[[^]]+\]\()?(http(?:s)?://[^)\s]+)\)?\)?`)
 )
 
 func (g *Github) loadByURL(ctx context.Context, url string) (TreeNode, error) {
@@ -140,12 +144,14 @@ func (g *Github) loadByURL(ctx context.Context, url string) (TreeNode, error) {
 	return nd, nil
 }
 func (g *Github) loadIssueTreeByURL(ctx context.Context, url string) (TreeNode, error) {
+	nd := TreeNode{URL: url}
 	i := strings.Index(url, "/repos/")
 	i += 1 + len("repos/")
 	url = strings.Trim(url[i:], "/")
 	sub := strings.Split(url, "/")
 	if len(sub) != 4 {
-		return TreeNode{}, fmt.Errorf("unexpected url: %s", url)
+		log.Printf("unexpected url: %s", url)
+		return nd, nil
 	}
 	org, repo, nums := sub[0], sub[1], sub[3]
 	num, err := strconv.Atoi(nums)
@@ -156,7 +162,7 @@ func (g *Github) loadIssueTreeByURL(ctx context.Context, url string) (TreeNode, 
 	if err != nil {
 		return TreeNode{}, err
 	}
-	nd := TreeNode{
+	nd = TreeNode{
 		ID:    iss.GetURL(),
 		URL:   iss.GetHTMLURL(),
 		Title: iss.GetTitle(),
@@ -188,7 +194,7 @@ func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]
 			title = strings.Replace(title, s[0], "", 1)
 			links = append(links, s[1])
 		}
-		nd := TreeNode{Title: title, Progress: &Progress{Total: 1}}
+		nd := TreeNode{Title: strings.TrimSpace(title), Progress: &Progress{Total: 1}}
 		if len(links) == 1 {
 			nd.URL = links[0]
 		} else if len(links) > 1 {
@@ -255,7 +261,9 @@ func (g *Github) cachePath(key string) string {
 func (g *Github) fromCache(key string, out interface{}) bool {
 	f, err := os.Open(g.cachePath(key))
 	if err != nil {
-		log.Println(err)
+		if !os.IsNotExist(err) {
+			log.Println(err)
+		}
 		return false
 	}
 	defer f.Close()
