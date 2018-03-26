@@ -8,7 +8,7 @@ import (
 type TreeWriterDesc struct {
 	Name  string
 	Ext   string
-	Write func(w io.Writer, t TreeNode) error
+	Write func(w io.Writer, t *TreeNode) error
 }
 
 var treeWriters = make(map[string]TreeWriterDesc)

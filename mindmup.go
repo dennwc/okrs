@@ -8,7 +8,7 @@ import (
 func init() {
 	RegisterTreeWriter(TreeWriterDesc{
 		Name: "mindmup", Ext: "mup",
-		Write: func(w io.Writer, t TreeNode) error {
+		Write: func(w io.Writer, t *TreeNode) error {
 			enc := json.NewEncoder(w)
 			enc.SetIndent("", "\t")
 			return enc.Encode(asMindMup(t))
@@ -16,15 +16,15 @@ func init() {
 	})
 }
 
-func asMindMup(t TreeNode) interface{} {
+func asMindMup(t *TreeNode) interface{} {
 	type Node struct {
 		ID    interface{}  `json:"id"`
 		Title string       `json:"title"`
 		Sub   map[int]Node `json:"ideas,omitempty"`
 	}
 	var last int
-	var conv func(t TreeNode) Node
-	conv = func(t TreeNode) Node {
+	var conv func(t *TreeNode) Node
+	conv = func(t *TreeNode) Node {
 		last++
 		id := last
 		n := Node{ID: id, Title: t.Title, Sub: make(map[int]Node)}

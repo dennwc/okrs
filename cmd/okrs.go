@@ -31,7 +31,7 @@ func registerTreeWriterFlags(flags *pflag.FlagSet) {
 	flags.StringP("out", "o", "json", "output format to use")
 }
 
-func writeTree(name string, cmd *cobra.Command, tree okrs.TreeNode) error {
+func writeTree(name string, cmd *cobra.Command, tree *okrs.TreeNode) error {
 	format, _ := cmd.Flags().GetString("out")
 	wr := okrs.TreeWriter(format)
 	if wr == nil {
@@ -60,7 +60,7 @@ func init() {
 	Root.AddCommand(MDCmd)
 
 	MDParseTree := &cobra.Command{
-		Use:   "tree",
+		Use:   "tree [FILE]",
 		Short: "parse markdown file ast OKR tree",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
@@ -96,7 +96,7 @@ func init() {
 	Root.AddCommand(GHCmd)
 
 	GHProjTree := &cobra.Command{
-		Use:   "proj",
+		Use:   "proj [PROJECTNAME]",
 		Short: "load OKR tree from Github project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			gh := &okrs.Github{}
@@ -123,4 +123,44 @@ func init() {
 	}
 	registerTreeWriterFlags(GHProjTree.Flags())
 	GHCmd.AddCommand(GHProjTree)
+
+	GHRepoTree := &cobra.Command{
+		Use:   "repo [NAME]",
+		Short: "load OKR tree from Github issues of a repository",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return errors.New("expected one argument")
+			}
+			gh := &okrs.Github{}
+			gh.Token, _ = cmd.Flags().GetString("auth")
+			org, _ := cmd.Flags().GetString("org")
+			rname := args[0]
+			if org == "" && rname != "" {
+				if i := strings.Index(rname, "/"); i > 0 {
+					org, rname = rname[:i], rname[i+1:]
+				}
+			}
+			if org == "" {
+				return errors.New("organization should be specified")
+			} else if rname == "" {
+				return errors.New("repository should be specified")
+			}
+			rname = strings.TrimPrefix(rname, org+"/")
+			o := okrs.GHOrg{Name: org}
+			repo := okrs.GHRepo{Name: rname}
+			o.Repos = append(o.Repos, repo)
+			gh.Orgs = append(gh.Orgs, o)
+			tree, err := gh.LoadTree(context.TODO())
+			if err != nil {
+				return err
+			}
+			name := org
+			if len(args) == 1 {
+				name += "_" + strings.Replace(args[0], " ", "_", -1)
+			}
+			return writeTree(name, cmd, tree)
+		},
+	}
+	registerTreeWriterFlags(GHRepoTree.Flags())
+	GHCmd.AddCommand(GHRepoTree)
 }

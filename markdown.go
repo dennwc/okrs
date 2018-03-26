@@ -16,10 +16,10 @@ func init() {
 	})
 }
 
-func ParseMDTree(r io.Reader) (TreeNode, error) {
+func ParseMDTree(r io.Reader) (*TreeNode, error) {
 	ast, err := parseMD(r)
 	if err != nil {
-		return TreeNode{}, err
+		return nil, err
 	}
 	return mdDoc2Tree(ast), nil
 }
@@ -80,23 +80,23 @@ func printMD(w io.Writer, n *blackfriday.Node, tabs string) {
 	}
 }
 
-func mdDoc2Tree(doc *blackfriday.Node) TreeNode {
-	var root TreeNode
+func mdDoc2Tree(doc *blackfriday.Node) *TreeNode {
+	root := &TreeNode{}
 	cur := func() (*TreeNode, int) {
-		n, lvl := &root, 0
+		n, lvl := root, 0
 		for len(n.Sub) != 0 {
-			n = &n.Sub[len(n.Sub)-1]
+			n = n.Sub[len(n.Sub)-1]
 			lvl++
 		}
 		return n, lvl
 	}
 	curAt := func(dst int) *TreeNode {
-		n, lvl := &root, 0
+		n, lvl := root, 0
 		for lvl < dst {
 			if len(n.Sub) == 0 {
-				n.Sub = append(n.Sub, TreeNode{})
+				n.Sub = append(n.Sub, &TreeNode{})
 			}
-			n = &n.Sub[len(n.Sub)-1]
+			n = n.Sub[len(n.Sub)-1]
 			lvl++
 		}
 		return n
@@ -109,7 +109,7 @@ func mdDoc2Tree(doc *blackfriday.Node) TreeNode {
 			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
 				nd.Title = strings.TrimRight(string(txt.Literal), ":")
 			}
-			par.Sub = append(par.Sub, nd)
+			par.Sub = append(par.Sub, &nd)
 		case blackfriday.Paragraph:
 			desc := ""
 			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
@@ -132,8 +132,8 @@ func mdDoc2Tree(doc *blackfriday.Node) TreeNode {
 	return root
 }
 
-func mdList2Tree(list *blackfriday.Node) []TreeNode {
-	var out []TreeNode
+func mdList2Tree(list *blackfriday.Node) []*TreeNode {
+	var out []*TreeNode
 	for n := list.FirstChild; n != nil; n = n.Next {
 		switch n.Type {
 		case blackfriday.Item:
@@ -143,8 +143,8 @@ func mdList2Tree(list *blackfriday.Node) []TreeNode {
 	return out
 }
 
-func mdItem2Tree(root *blackfriday.Node) TreeNode {
-	cur := TreeNode{}
+func mdItem2Tree(root *blackfriday.Node) *TreeNode {
+	cur := &TreeNode{}
 	for n := root.FirstChild; n != nil; n = n.Next {
 		switch n.Type {
 		case blackfriday.Paragraph:
@@ -158,11 +158,11 @@ func mdItem2Tree(root *blackfriday.Node) TreeNode {
 	return cur
 }
 
-func WriteMDTree(w io.Writer, tree TreeNode) error {
+func WriteMDTree(w io.Writer, tree *TreeNode) error {
 	return writeMDTree(w, tree, 1, -1)
 }
 
-func writeMDTree(w io.Writer, node TreeNode, lvl, blvl int) error {
+func writeMDTree(w io.Writer, node *TreeNode, lvl, blvl int) error {
 	var last error
 	write := func(format string, args ...interface{}) {
 		_, err := fmt.Fprintf(w, format, args...)
@@ -170,8 +170,8 @@ func writeMDTree(w io.Writer, node TreeNode, lvl, blvl int) error {
 			last = err
 		}
 	}
-	var hasDesc func(TreeNode) bool
-	hasDesc = func(node TreeNode) bool {
+	var hasDesc func(*TreeNode) bool
+	hasDesc = func(node *TreeNode) bool {
 		if node.Desc != "" {
 			return true
 		}

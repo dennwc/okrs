@@ -27,6 +27,11 @@ type Github struct {
 type GHOrg struct {
 	Name     string      `json:"name" yaml:"name"`
 	Projects []GHProject `json:"projects,omitempty" yaml:"projects,omitempty"`
+	Repos    []GHRepo    `json:"repos,omitempty" yaml:"repos,omitempty"`
+}
+
+type GHRepo struct {
+	Name string `json:"name" yaml:"name"`
 }
 
 type GHProject struct {
@@ -49,8 +54,8 @@ func (g *Github) client(ctx context.Context) *github.Client {
 	return g.cli
 }
 
-func (g *Github) LoadTree(ctx context.Context) (TreeNode, error) {
-	var root TreeNode
+func (g *Github) LoadTree(ctx context.Context) (*TreeNode, error) {
+	root := &TreeNode{}
 	for _, org := range g.Orgs {
 		node, err := g.loadOrgTree(ctx, org)
 		if err != nil {
@@ -61,24 +66,13 @@ func (g *Github) LoadTree(ctx context.Context) (TreeNode, error) {
 	return root, nil
 }
 
-func (g *Github) loadOrgTree(ctx context.Context, org GHOrg) (TreeNode, error) {
+func (g *Github) loadOrgTree(ctx context.Context, org GHOrg) (*TreeNode, error) {
 	proj, err := g.listProjects(ctx, org.Name)
 	if err != nil {
-		return TreeNode{}, err
+		return nil, err
 	}
-	root := TreeNode{Title: org.Name}
-	if len(org.Projects) == 0 {
-		for _, p := range proj {
-			node, err := g.loadProjTree(ctx, org.Name, p.GetID())
-			if err != nil {
-				return root, err
-			}
-			if node.Title == "" {
-				node.Title = p.GetName()
-			}
-			root.Sub = append(root.Sub, node)
-		}
-	} else {
+	root := &TreeNode{Title: org.Name}
+	if len(org.Projects) != 0 { // load selected projects
 		for _, p := range org.Projects {
 			id := p.ID
 			if id == 0 {
@@ -87,6 +81,9 @@ func (g *Github) loadOrgTree(ctx context.Context, org GHOrg) (TreeNode, error) {
 						id = p2.GetID()
 						break
 					}
+				}
+				if id == 0 {
+					return root, fmt.Errorf("cannot find project with name %q", p.Name)
 				}
 			}
 			node, err := g.loadProjTree(ctx, org.Name, id)
@@ -99,14 +96,60 @@ func (g *Github) loadOrgTree(ctx context.Context, org GHOrg) (TreeNode, error) {
 			root.Sub = append(root.Sub, node)
 		}
 	}
+	if len(org.Repos) != 0 { // load selected repositories
+		for _, repo := range org.Repos {
+			arr, err := g.listIssues(ctx, org.Name, repo.Name)
+			if err != nil {
+				return root, err
+			}
+			m := make(map[string]*TreeNode)
+			left := make(map[string][]*TreeNode)
+			for _, iss := range arr {
+				nd, err := g.loadIssue(ctx, org.Name, repo.Name, iss)
+				if err != nil {
+					return root, err
+				}
+				if nd.parent == "" {
+					root.Sub = append(root.Sub, nd)
+				} else {
+					if par := m[nd.parent]; par != nil {
+						par.Sub = append(par.Sub, nd)
+					} else {
+						left[nd.parent] = append(left[nd.parent], nd)
+					}
+				}
+				if list := left[nd.ID]; len(list) > 0 {
+					nd.Sub = append(nd.Sub, list...)
+					delete(left, nd.ID)
+				}
+				m[nd.ID] = nd
+			}
+			for _, list := range left {
+				root.Sub = append(root.Sub, list...)
+			}
+		}
+	}
+	if len(org.Projects) == 0 && len(org.Repos) == 0 {
+		// defaults to loading projects
+		for _, p := range proj {
+			node, err := g.loadProjTree(ctx, org.Name, p.GetID())
+			if err != nil {
+				return root, err
+			}
+			if node.Title == "" {
+				node.Title = p.GetName()
+			}
+			root.Sub = append(root.Sub, node)
+		}
+	}
 	return root, nil
 }
-func (g *Github) loadProjTree(ctx context.Context, org string, proj int64) (TreeNode, error) {
+func (g *Github) loadProjTree(ctx context.Context, org string, proj int64) (*TreeNode, error) {
 	cols, err := g.listProjColumns(ctx, proj)
 	if err != nil {
-		return TreeNode{}, err
+		return nil, err
 	}
-	var root TreeNode
+	root := &TreeNode{}
 	for _, col := range cols {
 		cards, err := g.listProjCards(ctx, col.GetID())
 		if err != nil {
@@ -115,7 +158,7 @@ func (g *Github) loadProjTree(ctx context.Context, org string, proj int64) (Tree
 		for _, c := range cards {
 			url := c.GetContentURL()
 			if url == "" && c.Note != nil {
-				root.Sub = append(root.Sub, TreeNode{Desc: c.GetNote()})
+				root.Sub = append(root.Sub, &TreeNode{Desc: c.GetNote()})
 				continue
 			}
 			nd, err := g.loadByURL(ctx, url)
@@ -129,13 +172,17 @@ func (g *Github) loadProjTree(ctx context.Context, org string, proj int64) (Tree
 }
 
 var (
-	reSubtask = regexp.MustCompile(`([\t ]*)-\s+\[(\s|x)\]\s+([^\s].*[^\s])`)
-	reHashRef = regexp.MustCompile(`#(\d+)`)
-	reURL     = regexp.MustCompile(`\(?(?:\[[^]]+\]\()?(http(?:s)?://[^)\s]+)\)?\)?`)
+	reSubtask       = regexp.MustCompile(`([\t ]*)-\s+\[(\s|x)\]\s+([^\s].*[^\s])`)
+	reHashRef       = regexp.MustCompile(`#(\d+)`)
+	reURL           = regexp.MustCompile(`\(?(?:\[[^]]+\]\()?(http(?:s)?://[^)\s]+)\)?\)?`)
+	rePriority      = regexp.MustCompile(`\[P(\d+)\]\s*`)
+	reParent        = regexp.MustCompile(`\*\*Parent(?:\s[^\s]+)?:\*\*\s+([^\n\r]+)`)
+	reProgressPerc  = regexp.MustCompile(`\*\*Progress:\*\*\s+([\d]+)%`)
+	reProgressParts = regexp.MustCompile(`\*\*Progress:\*\*\s+([\d]+)/([\d]+)`)
 )
 
-func (g *Github) loadByURL(ctx context.Context, url string) (TreeNode, error) {
-	nd := TreeNode{URL: url}
+func (g *Github) loadByURL(ctx context.Context, url string) (*TreeNode, error) {
+	nd := &TreeNode{URL: url}
 	if strings.Contains(url, "/issues/") {
 		return g.loadIssueTreeByURL(ctx, url)
 	} else {
@@ -143,8 +190,24 @@ func (g *Github) loadByURL(ctx context.Context, url string) (TreeNode, error) {
 	}
 	return nd, nil
 }
-func (g *Github) loadIssueTreeByURL(ctx context.Context, url string) (TreeNode, error) {
-	nd := TreeNode{URL: url}
+func (g *Github) loadIssue(ctx context.Context, org, repo string, iss *github.Issue) (*TreeNode, error) {
+	nd := &TreeNode{
+		ID:    iss.GetURL(),
+		URL:   iss.GetHTMLURL(),
+		Title: iss.GetTitle(),
+	}
+	err := g.parseIssueBody(ctx, org, repo, iss.GetBody(), nd)
+	return nd, err
+}
+func (g *Github) loadIssueTreeByNum(ctx context.Context, org, repo string, num int) (*TreeNode, error) {
+	iss, err := g.getIssue(ctx, org, repo, num)
+	if err != nil {
+		return nil, err
+	}
+	return g.loadIssue(ctx, org, repo, iss)
+}
+func (g *Github) loadIssueTreeByURL(ctx context.Context, url string) (*TreeNode, error) {
+	nd := &TreeNode{URL: url}
 	i := strings.Index(url, "/repos/")
 	i += 1 + len("repos/")
 	url = strings.Trim(url[i:], "/")
@@ -156,23 +219,63 @@ func (g *Github) loadIssueTreeByURL(ctx context.Context, url string) (TreeNode, 
 	org, repo, nums := sub[0], sub[1], sub[3]
 	num, err := strconv.Atoi(nums)
 	if err != nil {
-		return TreeNode{}, fmt.Errorf("cannot parse issues number %s: %v", nums, err)
+		return nil, fmt.Errorf("cannot parse issues number %s: %v", nums, err)
 	}
-	iss, err := g.getIssue(ctx, org, repo, num)
-	if err != nil {
-		return TreeNode{}, err
-	}
-	nd = TreeNode{
-		ID:    iss.GetURL(),
-		URL:   iss.GetHTMLURL(),
-		Title: iss.GetTitle(),
-	}
-	nd.Sub, err = g.parseIssueBody(ctx, org, repo, iss.GetBody())
-	return nd, err
+	return g.loadIssueTreeByNum(ctx, org, repo, num)
 }
-func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]TreeNode, error) {
+func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string, nd *TreeNode) error {
+	if sub := reParent.FindStringSubmatch(body); len(sub) > 0 {
+		_, links, err := g.parseLinks(ctx, org, repo, sub[1])
+		if err != nil {
+			return err
+		} else if len(links) > 1 {
+			return fmt.Errorf("only one parent should be specified, got: %v", links)
+		}
+		if len(links) == 1 {
+			nd.parent = links[0]
+		}
+	}
+	if sub := reProgressPerc.FindStringSubmatch(body); len(sub) > 0 {
+		perc, err := strconv.ParseFloat(sub[1], 64)
+		if err != nil {
+			return fmt.Errorf("cannot parse percents: %v", err)
+		}
+		nd.Progress = &Progress{Done: int(perc), Total: 100}
+	} else if sub = reProgressParts.FindStringSubmatch(body); len(sub) > 0 {
+		done, err := strconv.ParseInt(sub[1], 10, 64)
+		if err != nil {
+			return fmt.Errorf("cannot parse done parts: %v", err)
+		}
+		total, err := strconv.ParseInt(sub[2], 10, 64)
+		if err != nil {
+			return fmt.Errorf("cannot parse total parts: %v", err)
+		}
+		nd.Progress = &Progress{Done: int(done), Total: int(total)}
+	}
+	var err error
+	nd.Sub, err = g.parseIssueItems(ctx, org, repo, body)
+	return err
+}
+func (g *Github) parseLinks(ctx context.Context, org, repo, str string) (string, []string, error) {
+	var links []string
+	for _, s := range reHashRef.FindAllStringSubmatch(str, -1) {
+		str = strings.Replace(str, s[0], "", 1)
+		ref, _ := strconv.Atoi(s[1])
+		link, err := g.resolveHashRef(ctx, org, repo, ref)
+		if err != nil {
+			return str, links, err
+		}
+		links = append(links, link)
+	}
+	for _, s := range reURL.FindAllStringSubmatch(str, -1) {
+		str = strings.Replace(str, s[0], "", 1)
+		links = append(links, s[1])
+	}
+	return str, links, nil
+}
+func (g *Github) parseIssueItems(ctx context.Context, org, repo, body string) ([]*TreeNode, error) {
 	type Task struct {
-		Node TreeNode
+		Node *TreeNode
 		Lvl  int
 	}
 	var tasks []Task
@@ -180,21 +283,24 @@ func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]
 	for _, sub := range reSubtask.FindAllStringSubmatch(body, -1) {
 		lvl, done, title := len(sub[1]), sub[2] == "x", sub[3]
 		_ = lvl
-		var links []string
-		for _, s := range reHashRef.FindAllStringSubmatch(title, -1) {
-			title = strings.Replace(title, s[0], "", 1)
-			ref, _ := strconv.Atoi(s[1])
-			link, err := g.resolveHashRef(ctx, org, repo, ref)
+		var (
+			links []string
+			err   error
+		)
+		title, links, err = g.parseLinks(ctx, org, repo, title)
+		if err != nil {
+			return nil, err
+		}
+		var pri *int
+		if sub := rePriority.FindStringSubmatch(title); len(sub) > 0 {
+			title = strings.Replace(title, sub[0], "", 1)
+			pr, err := strconv.Atoi(sub[1])
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("cannot parse priority: %v", err)
 			}
-			links = append(links, link)
+			pri = &pr
 		}
-		for _, s := range reURL.FindAllStringSubmatch(title, -1) {
-			title = strings.Replace(title, s[0], "", 1)
-			links = append(links, s[1])
-		}
-		nd := TreeNode{Title: strings.TrimSpace(title), Progress: &Progress{Total: 1}}
+		nd := &TreeNode{Title: strings.TrimSpace(title), Priority: pri, Progress: &Progress{Total: 1}}
 		if len(links) == 1 {
 			nd.URL = links[0]
 		} else if len(links) > 1 {
@@ -220,14 +326,14 @@ func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]
 	for i, l := range lvls {
 		depth[l] = i
 	}
-	var root TreeNode
+	root := &TreeNode{}
 	curAt := func(dst int) *TreeNode {
-		n, lvl := &root, 0
+		n, lvl := root, 0
 		for lvl < dst {
 			if len(n.Sub) == 0 {
-				n.Sub = append(n.Sub, TreeNode{})
+				n.Sub = append(n.Sub, &TreeNode{})
 			}
-			n = &n.Sub[len(n.Sub)-1]
+			n = n.Sub[len(n.Sub)-1]
 			lvl++
 		}
 		return n
@@ -236,10 +342,10 @@ func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]
 		par := curAt(depth[t.Lvl])
 		par.Sub = append(par.Sub, t.Node)
 	}
-	var fix func(TreeNode) TreeNode
-	fix = func(n TreeNode) TreeNode {
+	var fix func(*TreeNode)
+	fix = func(n *TreeNode) {
 		for i := range n.Sub {
-			n.Sub[i] = fix(n.Sub[i])
+			fix(n.Sub[i])
 		}
 		if len(n.Sub) == 1 {
 			s := n.Sub[0]
@@ -247,9 +353,8 @@ func (g *Github) parseIssueBody(ctx context.Context, org, repo, body string) ([]
 				n.Sub = s.Sub
 			}
 		}
-		return n
 	}
-	root = fix(root)
+	fix(root)
 	return root.Sub, nil
 }
 
