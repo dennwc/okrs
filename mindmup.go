@@ -8,7 +8,7 @@ import (
 func init() {
 	RegisterTreeWriter(TreeWriterDesc{
 		Name: "mindmup", Ext: "mup",
-		Write: func(w io.Writer, t *TreeNode) error {
+		Write: func(w io.Writer, t *Node) error {
 			enc := json.NewEncoder(w)
 			enc.SetIndent("", "\t")
 			return enc.Encode(asMindMup(t))
@@ -16,18 +16,18 @@ func init() {
 	})
 }
 
-func asMindMup(t *TreeNode) interface{} {
-	type Node struct {
-		ID    interface{}  `json:"id"`
-		Title string       `json:"title"`
-		Sub   map[int]Node `json:"ideas,omitempty"`
+func asMindMup(t *Node) interface{} {
+	type MupNode struct {
+		ID    interface{}     `json:"id"`
+		Title string          `json:"title"`
+		Sub   map[int]MupNode `json:"ideas,omitempty"`
 	}
 	var last int
-	var conv func(t *TreeNode) Node
-	conv = func(t *TreeNode) Node {
+	var conv func(t *Node) MupNode
+	conv = func(t *Node) MupNode {
 		last++
 		id := last
-		n := Node{ID: id, Title: t.Title, Sub: make(map[int]Node)}
+		n := MupNode{ID: id, Title: t.Title, Sub: make(map[int]MupNode)}
 		for i, s := range t.Sub {
 			n.Sub[i+1] = conv(s)
 		}
@@ -37,10 +37,10 @@ func asMindMup(t *TreeNode) interface{} {
 	root := conv(t)
 	root.ID = "root"
 	return struct {
-		Node
+		MupNode
 		Vers int `json:"formatVersion"`
 	}{
-		Node: root,
-		Vers: 3,
+		MupNode: root,
+		Vers:    3,
 	}
 }

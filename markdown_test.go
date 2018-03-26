@@ -10,7 +10,7 @@ import (
 var casesMDTree = []struct {
 	name string
 	md   string
-	exp  TreeNode
+	exp  Node
 }{
 	{
 		name: "basic",
@@ -41,24 +41,24 @@ Description 3
 
 ## Level 2.3
 `,
-		exp: TreeNode{
+		exp: Node{
 			Title: "Root",
 			Desc:  "Some description",
-			Sub: []TreeNode{
+			Sub: []Node{
 				{
 					Title: "Level 2",
 					Desc:  "Description 2",
-					Sub: []TreeNode{
+					Sub: []Node{
 						{
 							Title: "sub 1",
-							Sub: []TreeNode{
+							Sub: []Node{
 								{Title: "sub 1.1"},
 								{Title: "sub 1.2"},
 							},
 						},
 						{
 							Title: "sub 2",
-							Sub: []TreeNode{
+							Sub: []Node{
 								{Title: "sub 2.1"},
 								{Title: "sub 2.2"},
 							},
@@ -66,7 +66,7 @@ Description 3
 						{
 							Title: "Level 3",
 							Desc:  "Description 3",
-							Sub: []TreeNode{
+							Sub: []Node{
 								{Title: "sub 3.1"},
 								{Title: "sub 3.2"},
 							},
@@ -75,9 +75,9 @@ Description 3
 				},
 				{
 					Title: "Level 2.2",
-					Sub: []TreeNode{
-						{Sub: []TreeNode{
-							{Sub: []TreeNode{
+					Sub: []Node{
+						{Sub: []Node{
+							{Sub: []Node{
 								{Title: "Level 5"},
 							}},
 						}},

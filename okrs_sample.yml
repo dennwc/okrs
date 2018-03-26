@@ -1,0 +1,15 @@
+output:
+  - path: ./srcd-okrs.md
+markdown:
+  - ./local.md # read OKRs from local file
+github:
+  # token: xxxxxxx # API token
+  cache: .cache
+  orgs:
+    - name: org-name
+      repos:
+        # scan issues in github.com/org-name/repo-name
+        - name: repo-name
+      projects:
+        # scan issues in "Project name" from github.com/org-name
+        - name: "Project name"

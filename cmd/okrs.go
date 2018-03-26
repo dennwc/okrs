@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -18,6 +17,14 @@ var (
 	Root = &cobra.Command{
 		Use:   "okrs",
 		Short: "tool for building OKR trees",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			conf, _ := cmd.Flags().GetString("conf")
+			c, err := okrs.ReadConfig(conf)
+			if err != nil {
+				return err
+			}
+			return c.Run(context.TODO())
+		},
 	}
 )
 
@@ -31,28 +38,15 @@ func registerTreeWriterFlags(flags *pflag.FlagSet) {
 	flags.StringP("out", "o", "json", "output format to use")
 }
 
-func writeTree(name string, cmd *cobra.Command, tree *okrs.TreeNode) error {
+func writeTree(name string, cmd *cobra.Command, tree *okrs.Tree) error {
 	format, _ := cmd.Flags().GetString("out")
-	wr := okrs.TreeWriter(format)
-	if wr == nil {
-		return fmt.Errorf("unknown format %q", format)
-	}
-	var w io.Writer = os.Stdout
-	if name != "" && name != "-" {
-		if wr.Ext != "" {
-			name += "." + wr.Ext
-		}
-		f, err := os.Create(name)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		w = f
-	}
-	return wr.Write(w, tree)
+	o := okrs.Output{Format: format, Path: name}
+	return o.WriteTree(tree)
 }
 
 func init() {
+	Root.Flags().StringP("conf", "c", "okrs.yml", "config file path")
+
 	MDCmd := &cobra.Command{
 		Use:   "md",
 		Short: "markdown-related tools",
@@ -77,11 +71,12 @@ func init() {
 				defer f.Close()
 				r = f
 			}
-			tree, err := okrs.ParseMDTree(r)
+			tr := okrs.NewTree()
+			err := okrs.ParseMDTree(r, tr)
 			if err != nil {
 				return err
 			}
-			return writeTree(name, cmd, tree)
+			return writeTree(name, cmd, tr)
 		},
 	}
 	registerTreeWriterFlags(MDParseTree.Flags())
@@ -110,7 +105,8 @@ func init() {
 				o.Projects = append(o.Projects, okrs.GHProject{Name: arg})
 			}
 			gh.Orgs = append(gh.Orgs, o)
-			tree, err := gh.LoadTree(context.TODO())
+			tr := okrs.NewTree()
+			err := gh.LoadTree(context.TODO(), tr)
 			if err != nil {
 				return err
 			}
@@ -118,7 +114,7 @@ func init() {
 			if len(args) == 1 {
 				name += "_" + strings.Replace(args[0], " ", "_", -1)
 			}
-			return writeTree(name, cmd, tree)
+			return writeTree(name, cmd, tr)
 		},
 	}
 	registerTreeWriterFlags(GHProjTree.Flags())
@@ -150,7 +146,8 @@ func init() {
 			repo := okrs.GHRepo{Name: rname}
 			o.Repos = append(o.Repos, repo)
 			gh.Orgs = append(gh.Orgs, o)
-			tree, err := gh.LoadTree(context.TODO())
+			tr := okrs.NewTree()
+			err := gh.LoadTree(context.TODO(), tr)
 			if err != nil {
 				return err
 			}
@@ -158,7 +155,7 @@ func init() {
 			if len(args) == 1 {
 				name += "_" + strings.Replace(args[0], " ", "_", -1)
 			}
-			return writeTree(name, cmd, tree)
+			return writeTree(name, cmd, tr)
 		},
 	}
 	registerTreeWriterFlags(GHRepoTree.Flags())
