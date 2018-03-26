@@ -21,7 +21,7 @@ func ParseMDTree(r io.Reader, tr *Tree) error {
 	if err != nil {
 		return err
 	}
-	mdDoc2Tree(ast, tr)
+	mdDoc2Tree(tr, ast)
 	return nil
 }
 
@@ -81,7 +81,7 @@ func printMD(w io.Writer, n *blackfriday.Node, tabs string) {
 	}
 }
 
-func mdDoc2Tree(doc *blackfriday.Node, tr *Tree) {
+func mdDoc2Tree(tr *Tree, doc *blackfriday.Node) {
 	root := tr.root
 	cur := func() (*Node, int) {
 		n, lvl := root, 0
@@ -95,7 +95,7 @@ func mdDoc2Tree(doc *blackfriday.Node, tr *Tree) {
 		n, lvl := root, 0
 		for lvl < dst {
 			if len(n.Sub) == 0 {
-				n.Sub = append(n.Sub, &Node{})
+				n.Sub = append(n.Sub, tr.NewNode(Node{}))
 			}
 			n = n.Sub[len(n.Sub)-1]
 			lvl++
@@ -110,7 +110,7 @@ func mdDoc2Tree(doc *blackfriday.Node, tr *Tree) {
 			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
 				nd.Title = strings.TrimRight(string(txt.Literal), ":")
 			}
-			par.Sub = append(par.Sub, &nd)
+			par.Sub = append(par.Sub, tr.NewNode(nd))
 		case blackfriday.Paragraph:
 			desc := ""
 			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
@@ -124,7 +124,7 @@ func mdDoc2Tree(doc *blackfriday.Node, tr *Tree) {
 			}
 		case blackfriday.List:
 			c, _ := cur()
-			c.Sub = append(c.Sub, mdList2Tree(n)...)
+			c.Sub = append(c.Sub, mdList2Tree(tr, n)...)
 		}
 	}
 	for len(root.Sub) == 1 && root.Title == "" {
@@ -132,19 +132,19 @@ func mdDoc2Tree(doc *blackfriday.Node, tr *Tree) {
 	}
 }
 
-func mdList2Tree(list *blackfriday.Node) []*Node {
+func mdList2Tree(tr *Tree, list *blackfriday.Node) []*Node {
 	var out []*Node
 	for n := list.FirstChild; n != nil; n = n.Next {
 		switch n.Type {
 		case blackfriday.Item:
-			out = append(out, mdItem2Tree(n))
+			out = append(out, mdItem2Tree(tr, n))
 		}
 	}
 	return out
 }
 
-func mdItem2Tree(root *blackfriday.Node) *Node {
-	cur := &Node{}
+func mdItem2Tree(tr *Tree, root *blackfriday.Node) *Node {
+	var cur Node
 	for n := root.FirstChild; n != nil; n = n.Next {
 		switch n.Type {
 		case blackfriday.Paragraph:
@@ -152,10 +152,10 @@ func mdItem2Tree(root *blackfriday.Node) *Node {
 				cur.Title = string(txt.Literal)
 			}
 		case blackfriday.List:
-			cur.Sub = mdList2Tree(n)
+			cur.Sub = mdList2Tree(tr, n)
 		}
 	}
-	return cur
+	return tr.NewNode(cur)
 }
 
 func WriteMDTree(w io.Writer, tree *Node) error {
