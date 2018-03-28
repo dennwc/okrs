@@ -372,16 +372,15 @@ func (g *Github) parseIssueItems(ctx context.Context, tr *Tree, org, repo, body 
 }
 
 func (g *Github) cacheDir() string {
-	path := g.Cache
-	if path == "" {
-		path = "./.cache/"
-	}
-	return path
+	return g.Cache
 }
 func (g *Github) cachePath(key string) string {
 	return filepath.Join(g.cacheDir(), "gh_"+key+".json")
 }
 func (g *Github) fromCache(key string, out interface{}) bool {
+	if g.cacheDir() == "" {
+		return false
+	}
 	f, err := os.Open(g.cachePath(key))
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -398,6 +397,9 @@ func (g *Github) fromCache(key string, out interface{}) bool {
 	return true
 }
 func (g *Github) writeCache(key string, data interface{}) {
+	if g.cacheDir() == "" {
+		return
+	}
 	_ = os.MkdirAll(g.cacheDir(), 0755)
 	f, err := os.Create(g.cachePath(key))
 	if err != nil {

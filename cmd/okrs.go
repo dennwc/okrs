@@ -23,6 +23,11 @@ var (
 			if err != nil {
 				return err
 			}
+			if g := c.Github; g != nil {
+				if g.Cache != "" {
+					log.Println("using cache from", g.Cache)
+				}
+			}
 			return c.Run(context.TODO())
 		},
 	}
