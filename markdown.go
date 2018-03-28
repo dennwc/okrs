@@ -95,7 +95,7 @@ func mdDoc2Tree(tr *Tree, doc *blackfriday.Node) {
 		n, lvl := root, 0
 		for lvl < dst {
 			if len(n.Sub) == 0 {
-				n.Sub = append(n.Sub, tr.NewNode(Node{}))
+				n.AddChild(tr.NewNode(Node{}))
 			}
 			n = n.Sub[len(n.Sub)-1]
 			lvl++
@@ -110,7 +110,7 @@ func mdDoc2Tree(tr *Tree, doc *blackfriday.Node) {
 			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
 				nd.Title = strings.TrimRight(string(txt.Literal), ":")
 			}
-			par.Sub = append(par.Sub, tr.NewNode(nd))
+			par.AddChild(tr.NewNode(nd))
 		case blackfriday.Paragraph:
 			desc := ""
 			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
@@ -124,11 +124,11 @@ func mdDoc2Tree(tr *Tree, doc *blackfriday.Node) {
 			}
 		case blackfriday.List:
 			c, _ := cur()
-			c.Sub = append(c.Sub, mdList2Tree(tr, n)...)
+			c.AddChild(mdList2Tree(tr, n)...)
 		}
 	}
-	for len(root.Sub) == 1 && root.Title == "" {
-		root = root.Sub[0]
+	for len(tr.root.Sub) == 1 && tr.root.Title == "" {
+		tr.root = tr.root.Sub[0]
 	}
 }
 
@@ -187,6 +187,9 @@ func writeMDTree(w io.Writer, node *Node, lvl, blvl int) error {
 		if node.Priority != nil {
 			title = fmt.Sprintf("[P%d] %s", *node.Priority, title)
 		}
+		if node.URL != "" {
+			title += fmt.Sprintf(" ([link](%s))", node.URL)
+		}
 		write("%s* %s\n", strings.Repeat("\t", blvl-1), title)
 		for _, c := range node.Sub {
 			if err := writeMDTree(w, c, lvl+1, blvl+1); err != nil {
@@ -198,8 +201,10 @@ func writeMDTree(w io.Writer, node *Node, lvl, blvl int) error {
 	if node.Title != "" {
 		write("%s %s\n\n", strings.Repeat("#", lvl), node.Title)
 	}
-	if node.Progress != nil {
-		p := node.Progress
+	if node.URL != "" {
+		write("[Source page](%s)\n\n", node.URL)
+	}
+	if p := node.GetProgress(); p != (Progress{}) {
 		if p.Total == 100 {
 			write("**Progress:** %d%%\n\n", p.Done)
 		} else {

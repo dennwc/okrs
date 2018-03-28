@@ -81,7 +81,43 @@ type Node struct {
 	parent string
 }
 
+func (n *Node) GetProgress() Progress {
+	if n.Progress != nil && *n.Progress != (Progress{}) {
+		return *n.Progress
+	}
+	total := len(n.Sub)
+	done := 0
+	for _, sub := range n.Sub {
+		p := sub.GetProgress()
+		if p.IsDone() {
+			done++
+		}
+	}
+	return Progress{Done: done, Total: total}
+}
+
+func (n *Node) AddChild(arr ...*Node) {
+	if len(arr) == 0 {
+		return
+	}
+	m := make(map[*Node]struct{}, len(n.Sub))
+	for _, n2 := range n.Sub {
+		m[n2] = struct{}{}
+	}
+	for _, n2 := range arr {
+		if _, ok := m[n2]; ok {
+			continue
+		}
+		n.Sub = append(n.Sub, n2)
+		m[n2] = struct{}{}
+	}
+}
+
 type Progress struct {
 	Done  int `json:"done,omitempty" yaml:"done,omitempty"`
 	Total int `json:"total,omitempty" yaml:"total,omitempty"`
+}
+
+func (p Progress) IsDone() bool {
+	return p.Done == p.Total
 }
