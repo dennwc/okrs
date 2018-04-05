@@ -1,5 +1,11 @@
 package okrs
 
+import (
+	"fmt"
+	"path"
+	"strconv"
+)
+
 func NewTree() *Tree {
 	return &Tree{
 		root:  &Node{},
@@ -79,6 +85,16 @@ type Node struct {
 	Sub      []*Node   `json:"sub,omitempty" yaml:"sub,omitempty"`
 
 	parent string
+}
+
+// IssueNumber it returns the issue number for a node.
+func (n *Node) IssueNumber() (int, error) {
+	if n.URL == "" {
+		return 0, fmt.Errorf("no URL defined for this node")
+	}
+
+	_, id := path.Split(n.URL)
+	return strconv.Atoi(id)
 }
 
 func (n *Node) GetProgress() Progress {

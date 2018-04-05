@@ -187,9 +187,11 @@ func writeMDTree(w io.Writer, node *Node, lvl, blvl int) error {
 		if node.Priority != nil {
 			title = fmt.Sprintf("[P%d] %s", *node.Priority, title)
 		}
-		if node.URL != "" {
-			title += fmt.Sprintf(" ([link](%s))", node.URL)
+
+		if number, err := node.IssueNumber(); err == nil {
+			title += fmt.Sprintf(" ([#%d](%s))", number, node.URL)
 		}
+
 		write("%s* %s\n", strings.Repeat("\t", blvl-1), title)
 		for _, c := range node.Sub {
 			if err := writeMDTree(w, c, lvl+1, blvl+1); err != nil {
