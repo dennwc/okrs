@@ -1,10 +1,15 @@
 package okrs
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
+	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"gopkg.in/russross/blackfriday.v2"
 )
@@ -31,6 +36,7 @@ func parseMD(r io.Reader) (*blackfriday.Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	data = bytes.Replace(data, []byte("\r\n"), []byte("\n"), -1)
 	return parser.Parse(data), nil
 }
 
@@ -60,6 +66,14 @@ var mdTypeNames = map[blackfriday.NodeType]string{
 	blackfriday.TableBody:      "TableBody",
 	blackfriday.TableRow:       "TableRow",
 }
+
+var (
+	rePriority = regexp.MustCompile(`\[P(\d+)\]\s*`)
+	rePerc     = regexp.MustCompile(`([\d]+)%`)
+	reParts    = regexp.MustCompile(`([\d]+)/([\d]+)`)
+	reHashRef  = regexp.MustCompile(`#(\d+)`)
+	reURL      = regexp.MustCompile(`\(?(?:\[[^]]+\]\()?(http(?:s)?://[^)\s]+)\)?\)?`)
+)
 
 func printMD(w io.Writer, n *blackfriday.Node, tabs string) {
 	if n == nil {
@@ -112,23 +126,92 @@ func mdDoc2Tree(tr *Tree, doc *blackfriday.Node) {
 			}
 			par.AddChild(tr.NewNode(nd))
 		case blackfriday.Paragraph:
-			desc := ""
-			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
-				desc = strings.TrimSpace(string(txt.Literal))
-			}
 			c, _ := cur()
-			if c.Desc == "" {
-				c.Desc = desc
-			} else {
-				c.Desc += "\n" + desc
-			}
+			mdParToDesc(c, n)
 		case blackfriday.List:
 			c, _ := cur()
 			c.AddChild(mdList2Tree(tr, n)...)
 		}
 	}
-	for len(tr.root.Sub) == 1 && tr.root.Title == "" {
+	for len(tr.root.Sub) == 1 && tr.root.isProxyNode() {
 		tr.root = tr.root.Sub[0]
+	}
+}
+
+func mdParToDesc(nd *Node, par *blackfriday.Node) {
+	desc := ""
+	for n := par.FirstChild; n != nil; n = n.Next {
+		switch n.Type {
+		case blackfriday.Text:
+			if desc == "" {
+				desc = strings.TrimSpace(string(n.Literal))
+			}
+		case blackfriday.Strong:
+			key := strings.TrimSuffix(string(n.FirstChild.Literal), ":")
+			vnode := n.Next
+			if vnode == nil || vnode.Type != blackfriday.Text {
+				continue
+			}
+			n = vnode // skip text value
+			val := strings.TrimSpace(string(vnode.Literal))
+			switch key {
+			case "Progress":
+				if sub := rePerc.FindStringSubmatch(val); len(sub) > 0 {
+					perc, err := strconv.ParseFloat(sub[1], 64)
+					if err != nil {
+						log.Println(fmt.Errorf("cannot parse percents: %v", err))
+						continue
+					}
+					if v := int(perc); v != 0 {
+						nd.Progress = &Progress{Done: v, Total: 100}
+					}
+				} else if sub = reParts.FindStringSubmatch(val); len(sub) > 0 {
+					done, err := strconv.ParseInt(sub[1], 10, 64)
+					if err != nil {
+						log.Println(fmt.Errorf("cannot parse done parts: %v", err))
+						continue
+					}
+					total, err := strconv.ParseInt(sub[2], 10, 64)
+					if err != nil {
+						log.Println(fmt.Errorf("cannot parse total parts: %v", err))
+						continue
+					}
+					nd.Progress = &Progress{Done: int(done), Total: int(total)}
+				}
+			default:
+				switch {
+				case strings.HasPrefix(key, "Parent"):
+					var u Link
+					if val != "" {
+						if sub := reHashRef.FindStringSubmatch(val); len(sub) != 0 {
+							u.Title = "#" + sub[1]
+						}
+						if sub := reURL.FindStringSubmatch(val); len(sub) != 0 {
+							u.URL = sub[1]
+						}
+					} else if lnk := vnode.Next; lnk != nil && lnk.Type == blackfriday.Link {
+						n = lnk // skip link value
+						u.URL = string(lnk.LinkData.Destination)
+						if len(lnk.LinkData.Title) != 0 {
+							u.Title = string(lnk.LinkData.Title)
+						} else if txt := lnk.FirstChild; txt != nil && txt.Type == blackfriday.Text {
+							u.Title = string(txt.Literal)
+						}
+					}
+					if u.URL == "" {
+						u.URL = u.Title
+					}
+					if u != (Link{}) {
+						nd.parent = &u
+					}
+				}
+			}
+		}
+	}
+	if nd.Desc == "" {
+		nd.Desc = desc
+	} else {
+		nd.Desc += "\n" + desc
 	}
 }
 
@@ -143,13 +226,51 @@ func mdList2Tree(tr *Tree, list *blackfriday.Node) []*Node {
 	return out
 }
 
+func parseTitle(n *Node, s string) {
+	if sub := rePriority.FindStringSubmatch(s); len(sub) > 0 {
+		s = strings.Replace(s, sub[0], "", 1)
+		pr, err := strconv.Atoi(sub[1])
+		if err == nil {
+			n.Priority = &pr
+		}
+	}
+	var links []Link
+	for _, sub := range reHashRef.FindAllStringSubmatch(s, -1) {
+		s = strings.Replace(s, sub[0], "", 1)
+		links = append(links, Link{
+			Title: "#" + sub[1],
+			URL:   "#" + sub[1],
+		})
+	}
+	for _, sub := range reURL.FindAllStringSubmatch(s, -1) {
+		s = strings.Replace(s, sub[0], "", 1)
+		links = append(links, Link{
+			URL: sub[1],
+		})
+	}
+	if len(links) == 1 {
+		n.Link = links[0]
+	} else {
+		n.Links = links
+	}
+	n.Title = strings.TrimSpace(s)
+}
+
 func mdItem2Tree(tr *Tree, root *blackfriday.Node) *Node {
 	var cur Node
 	for n := root.FirstChild; n != nil; n = n.Next {
 		switch n.Type {
 		case blackfriday.Paragraph:
 			if txt := n.FirstChild; txt != nil && txt.Type == blackfriday.Text {
-				cur.Title = string(txt.Literal)
+				s := string(txt.Literal)
+				if len(s) > 4 && s[0] == '[' && s[2] == ']' && unicode.IsSpace(rune(s[3])) {
+					done := !unicode.IsSpace(rune(s[1]))
+					s = strings.TrimSpace(s[4:])
+					if done {
+						cur.Progress = &Progress{Done: 1, Total: 1}
+					}
+				}
+				parseTitle(&cur, s)
 			}
 		case blackfriday.List:
 			cur.Sub = mdList2Tree(tr, n)
@@ -187,8 +308,12 @@ func writeMDTree(w io.Writer, node *Node, lvl, blvl int) error {
 		if node.Priority != nil {
 			title = fmt.Sprintf("[P%d] %s", *node.Priority, title)
 		}
-		if node.URL != "" {
-			title += fmt.Sprintf(" ([link](%s))", node.URL)
+		if u := node.Link; u.URL != "" {
+			txt := "link"
+			if u.Title != "" {
+				txt = u.Title
+			}
+			title += fmt.Sprintf(" ([%s](%s))", txt, u.URL)
 		}
 		write("%s* %s\n", strings.Repeat("\t", blvl-1), title)
 		for _, c := range node.Sub {
@@ -201,8 +326,8 @@ func writeMDTree(w io.Writer, node *Node, lvl, blvl int) error {
 	if node.Title != "" {
 		write("%s %s\n\n", strings.Repeat("#", lvl), node.Title)
 	}
-	if node.URL != "" {
-		write("[Source page](%s)\n\n", node.URL)
+	if node.Link.URL != "" {
+		write("[Source page](%s)\n\n", node.Link.URL)
 	}
 	if p := node.GetProgress(); p != (Progress{}) {
 		if p.Total == 100 {

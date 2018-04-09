@@ -34,7 +34,7 @@ func asMindMup(t *Node) interface{} {
 		last++
 		id := last
 		n := MupNode{ID: id, Title: t.Title, Sub: make(map[int]MupNode)}
-		n.Attrs = &Attrs{BNode: fmt.Sprintf("%p", t), URL: t.URL}
+		n.Attrs = &Attrs{BNode: fmt.Sprintf("%p", t), URL: t.Link.URL}
 		for i, s := range t.Sub {
 			n.Sub[i+1] = conv(s)
 		}

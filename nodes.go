@@ -1,54 +1,26 @@
 package okrs
 
+import "sort"
+
 func NewTree() *Tree {
 	return &Tree{
-		root:  &Node{},
-		nodes: make(map[string]*Node),
-		urls:  make(map[string]*Node),
+		root: &Node{},
 	}
 }
 
 type Tree struct {
-	root  *Node
-	nodes map[string]*Node
-	urls  map[string]*Node
-	unk   []*Node
+	root *Node
+}
+
+func (tr *Tree) Root() *Node {
+	if tr == nil {
+		return nil
+	}
+	return tr.root
 }
 
 func (tr *Tree) NewNode(nd Node) *Node {
-	if n := tr.nodes[nd.ID]; nd.ID != "" && n != nil {
-		tr.merge(n, nd)
-		return n
-	}
-
-	if n := tr.urls[nd.URL]; nd.URL != "" && n != nil {
-		tr.merge(n, nd)
-		return n
-	}
-
-	n := &nd
-	if n.ID != "" {
-		tr.nodes[n.ID] = n
-		if n.URL != "" {
-			tr.urls[n.URL] = n
-		}
-	}
-
-	for i, un := range tr.unk {
-		if (n.Title != "" && n.Title == un.Title) || (n.URL != "" && n.URL == un.URL) {
-			tr.merge(n, *un)
-			if n.ID != "" {
-				tr.unk = append(tr.unk[:i], tr.unk[i+1:]...)
-			} else {
-				tr.unk[i] = n
-			}
-			return n
-		}
-	}
-	if n.ID == "" {
-		tr.unk = append(tr.unk, n)
-	}
-	return n
+	return &nd
 }
 
 func (tr *Tree) merge(n *Node, n2 Node) {
@@ -58,9 +30,8 @@ func (tr *Tree) merge(n *Node, n2 Node) {
 	if n.Desc == "" {
 		n.Desc = n2.Desc
 	}
-	if n.URL == "" {
-		n.URL = n2.URL
-		tr.urls[n.URL] = n
+	if n.Link.URL != "" {
+		n.Link = n2.Link
 	}
 	if n.Priority == nil {
 		n.Priority = n2.Priority
@@ -73,16 +44,41 @@ func (tr *Tree) merge(n *Node, n2 Node) {
 	}
 }
 
+type Link struct {
+	Title string `json:"title,omitempty" yaml:"title,omitempty"`
+	URL   string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
 type Node struct {
 	ID       string    `json:"id,omitempty" yaml:"id,omitempty"`
 	Title    string    `json:"title,omitempty" yaml:"title,omitempty"`
 	Desc     string    `json:"desc,omitempty" yaml:"desc,omitempty"`
-	URL      string    `json:"url,omitempty" yaml:"url,omitempty"`
+	Link     Link      `json:"url,omitempty" yaml:"url,omitempty"`
 	Priority *int      `json:"priority,omitempty" yaml:"priority,omitempty"`
 	Progress *Progress `json:"progress,omitempty" yaml:"progress,omitempty"`
 	Sub      []*Node   `json:"sub,omitempty" yaml:"sub,omitempty"`
+	Links    []Link    `json:"links,omitempty" yaml:"links,omitempty"`
 
-	parent string
+	parent *Link
+}
+
+func (n *Node) isProxyNode() bool {
+	return n.parent == nil && n.ID == "" && n.Title == "" && n.Desc == "" &&
+		n.Link == (Link{}) && n.Priority == nil && n.Progress == nil && len(n.Links) == 0
+}
+
+func (n *Node) Sort() {
+	sort.Slice(n.Sub, func(i, j int) bool {
+		a, b := n.Sub[i], n.Sub[j]
+		if a.Priority == nil || b.Priority == nil {
+			if a.Priority != nil || b.Priority != nil {
+				return b.Priority == nil
+			}
+		} else if p1, p2 := *a.Priority, *b.Priority; p1 != p2 {
+			return p1 < p2
+		}
+		return a.Title < b.Title
+	})
 }
 
 func (n *Node) GetProgress() Progress {
@@ -92,6 +88,9 @@ func (n *Node) GetProgress() Progress {
 	total := len(n.Sub)
 	done := 0
 	for _, sub := range n.Sub {
+		if sub == n {
+			panic("self-reference")
+		}
 		p := sub.GetProgress()
 		if p.IsDone() {
 			done++
@@ -109,6 +108,11 @@ func (n *Node) AddChild(arr ...*Node) {
 		m[n2] = struct{}{}
 	}
 	for _, n2 := range arr {
+		if n2 == nil {
+			panic("nil node")
+		} else if n2 == n {
+			panic("self-reference")
+		}
 		if _, ok := m[n2]; ok {
 			continue
 		}
