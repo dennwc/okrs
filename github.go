@@ -358,8 +358,13 @@ func (g *Github) parseIssueItems(ctx context.Context, tr *Tree, org, repo, body 
 	var fix func(*Node)
 	fix = func(n *Node) {
 		for i := range n.Sub {
+			if n == n.Sub[i] {
+				continue
+			}
+
 			fix(n.Sub[i])
 		}
+
 		if len(n.Sub) == 1 {
 			s := n.Sub[0]
 			if s.Title == "" && s.URL == "" && s.Desc == "" && s.ID == "" {
