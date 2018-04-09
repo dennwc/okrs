@@ -16,13 +16,16 @@ type Tree struct {
 }
 
 func (tr *Tree) NewNode(nd Node) *Node {
-	if n := tr.nodes[nd.ID]; n != nil {
-		tr.merge(n, nd)
-		return n
-	} else if n := tr.nodes[nd.URL]; n != nil {
+	if n := tr.nodes[nd.ID]; nd.ID != "" && n != nil {
 		tr.merge(n, nd)
 		return n
 	}
+
+	if n := tr.urls[nd.URL]; nd.URL != "" && n != nil {
+		tr.merge(n, nd)
+		return n
+	}
+
 	n := &nd
 	if n.ID != "" {
 		tr.nodes[n.ID] = n
@@ -30,6 +33,7 @@ func (tr *Tree) NewNode(nd Node) *Node {
 			tr.urls[n.URL] = n
 		}
 	}
+
 	for i, un := range tr.unk {
 		if (n.Title != "" && n.Title == un.Title) || (n.URL != "" && n.URL == un.URL) {
 			tr.merge(n, *un)
